@@ -34,7 +34,7 @@ class KeepAlive:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.keep_alive = KeepAlive(30)
+    app.state.keep_alive = KeepAlive()
     yield
     app.state.keep_alive.shutdown()
 
