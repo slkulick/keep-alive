@@ -4,7 +4,7 @@ import asyncio
 import httpx
 
 from fastapi import FastAPI, Request, status
-from fastapi.responses import Response
+from fastapi.responses import Response, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 
@@ -38,7 +38,6 @@ class KeepAlive:
         
         self._task.cancel()
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.keep_alive = None
@@ -55,12 +54,16 @@ async def root(request: Request):
     url = f"{request.url.scheme}://{request.url.netloc}/ping"
 
     if app.state.keep_alive is None:
-        app.state.keep_alive = KeepAlive(url, 15)
+        app.state.keep_alive = KeepAlive(url)
         app.state.keep_alive.start()
 
     return templates.TemplateResponse(
         request=request, name="Index.html.j2", context={"url": url}
     )
+
+@app.get("/health")
+async def health():
+    return PlainTextResponse(content="App is running fine :)")
 
 @app.get("/ping")
 async def ping():
