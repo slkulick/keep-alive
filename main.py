@@ -1,42 +1,50 @@
-import threading
-import requests
+from typing import Any
 
-from fastapi import FastAPI, Request
+import asyncio
+import httpx
+
+from fastapi import FastAPI, Request, status
+from fastapi.responses import Response
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 
 class KeepAlive:
-    _timer: threading.Timer | None = None
-    _period_sec: float | None = None
+    _url: str
+    _period_sec: float
+    _task: asyncio.Task[Any] | None
 
-    def __init__(self, period_sec: float=300):
+    def __init__(self, url: str, period_sec: float=300):
+        self._url = url
         self._period_sec = period_sec
+        self._task = None
+
+    def start(self):
+        if self._task is None:
+            self._task = asyncio.create_task(self._run())
+
+    async def _run(self):
+        async with httpx.AsyncClient() as client:
+            while True:
+                await asyncio.sleep(self._period_sec)
+
+                try:
+                    await client.get(self._url, timeout=5)
+                except Exception:
+                    pass
+
+    def stop(self):
+        if self._task is None:
+            return
         
-    def _trigger(self, url: str):
-        requests.get(url)
+        self._task.cancel()
 
-    def arm(self, url: str):
-        self.cancel()
-            
-        if self._period_sec:
-            self._timer = threading.Timer(self._period_sec, self._trigger, args=(url, ))
-            self._timer.start()
-
-    def cancel(self, wait: bool=False):
-        if self._timer and self._timer.is_alive():
-            self._timer.cancel()
-            if wait:
-                self._timer.join()
-
-    def shutdown(self):
-        self._period_sec = None
-        self.cancel(True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.keep_alive = KeepAlive()
+    app.state.keep_alive = None
     yield
-    app.state.keep_alive.shutdown()
+    if app.state.keep_alive is not None:
+        app.state.keep_alive.stop()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -44,8 +52,16 @@ templates = Jinja2Templates(directory="templates")
 
 @app.get("/")
 async def root(request: Request):
-    request.app.state.keep_alive.arm(str(request.url))
+    url = f"{request.url.scheme}://{request.url.netloc}/ping"
+
+    if app.state.keep_alive is None:
+        app.state.keep_alive = KeepAlive(url, 15)
+        app.state.keep_alive.start()
 
     return templates.TemplateResponse(
-        request=request, name="Index.html.j2", context={"url": str(request.url)}
+        request=request, name="Index.html.j2", context={"url": url}
     )
+
+@app.get("/ping")
+async def ping():
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
